@@ -1,0 +1,49 @@
+{
+  "name": "@elizaos/plugin-clawhub",
+  "version": "1.0.0",
+  "description": "ClawHub skills integration for elizaOS - install and use OpenClaw skills",
+  "main": "dist/index.js",
+  "type": "module",
+  "types": "dist/index.d.ts",
+  "keywords": [
+    "elizaos",
+    "plugin",
+    "clawhub",
+    "openclaw",
+    "skills",
+    "agents"
+  ],
+  "dependencies": {
+    "@elizaos/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "8.3.5",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "build": "tsup --format esm --dts",
+    "dev": "tsup --format esm --dts --watch",
+    "clean": "rm -rf dist",
+    "lint": "prettier --write ./src"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "agentConfig": {
+    "pluginType": "elizaos:plugin:1.0.0",
+    "pluginParameters": {
+      "CLAWHUB_SKILLS_DIR": {
+        "type": "string",
+        "description": "Directory to install skills (default: ./skills)",
+        "required": false,
+        "example": "./skills"
+      },
+      "CLAWHUB_AUTO_LOAD": {
+        "type": "boolean",
+        "description": "Automatically load installed skills on startup",
+        "required": false,
+        "example": "true"
+      }
+    }
+  }
+}
