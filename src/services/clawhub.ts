@@ -491,11 +491,22 @@ export class ClawHubService extends Service {
   /**
    * Get catalog stats for logging
    */
-  getCatalogStats(): { total: number; installed: number; cachedAt: number | null } {
+  getCatalogStats(): { total: number; installed: number; cachedAt: number | null; categories: string[] } {
+    const categories = new Set<string>();
+    if (this.catalogCache?.data) {
+      for (const skill of this.catalogCache.data) {
+        if (skill.tags) {
+          for (const tag of Object.keys(skill.tags)) {
+            if (tag !== 'latest') categories.add(tag);
+          }
+        }
+      }
+    }
     return {
       total: this.catalogCache?.data.length || 0,
       installed: this.loadedSkills.size,
       cachedAt: this.catalogCache?.cachedAt || null,
+      categories: Array.from(categories).slice(0, 20),
     };
   }
 

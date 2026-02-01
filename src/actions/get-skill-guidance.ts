@@ -26,12 +26,15 @@ export const getSkillGuidanceAction: Action = {
   name: 'GET_SKILL_GUIDANCE',
   similes: [
     'FIND_SKILL',
+    'SEARCH_SKILLS',
+    'SEARCH_CLAWHUB',
     'SKILL_HELP',
     'HOW_TO',
     'GET_INSTRUCTIONS',
     'LEARN_SKILL',
+    'LOOKUP_SKILL',
   ],
-  description: 'Get guidance on how to accomplish a task. Automatically finds and uses the best skill from ClawHub. Use when you need instructions for a specific capability.',
+  description: 'Search for and get skill instructions from ClawHub. Use when user asks to find, search, or look up a skill, or when you need instructions for a capability.',
 
   validate: async (runtime: IAgentRuntime, _message: Memory): Promise<boolean> => {
     const service = runtime.getService<ClawHubService>('CLAWHUB_SERVICE');
@@ -56,39 +59,50 @@ export const getSkillGuidanceAction: Action = {
         return { success: false, error: new Error('Query too short') };
       }
 
-      // Step 1: Check installed skills first (fast path)
-      const installedSkills = service.getLoadedSkills();
-      const localMatch = findBestLocalMatch(installedSkills, query);
+      // Extract meaningful search terms (skip common words)
+      const searchTerms = extractSearchTerms(query);
+      runtime.logger.info(`ClawHub: Searching for "${searchTerms}" (from: "${query.substring(0, 50)}...")`);
 
-      if (localMatch && localMatch.score >= 5) {
-        // Good local match - use it
+      // Step 1: Search ClawHub FIRST for best match
+      const searchResults = await service.search(searchTerms, 5);
+
+      // Step 2: Also check installed skills
+      const installedSkills = service.getLoadedSkills();
+      const localMatch = findBestLocalMatch(installedSkills, searchTerms);
+
+      runtime.logger.info(`ClawHub: Found ${searchResults.length} remote results, local match: ${localMatch?.skill.slug || 'none'} (score: ${localMatch?.score || 0})`);
+
+      // Step 3: Decide best option
+      const bestRemote = searchResults.length > 0 ? searchResults[0] : null;
+
+      // Remote score is 0-1, scale to comparable range (0-30)
+      // Require high confidence from remote (score > 0.25 means relevant)
+      const remoteScore = bestRemote ? bestRemote.score * 100 : 0;
+
+      // Local requires name/slug match to be considered (score >= 8)
+      // Just matching description words isn't enough
+      const localIsStrong = localMatch && localMatch.score >= 8;
+
+      if (!bestRemote || (bestRemote.score < 0.25 && !localIsStrong)) {
+        // No good matches anywhere
+        const text = `I couldn't find a specific skill for "${searchTerms}". I'll do my best with my general knowledge.`;
+        if (callback) await callback({ text });
+        return { success: true, text, data: { found: false, query: searchTerms } };
+      }
+
+      // Prefer remote if it's confident, unless local is a strong name match
+      const useLocal = localIsStrong && (!bestRemote || localMatch!.score >= remoteScore);
+
+      if (useLocal && localMatch) {
+        runtime.logger.info(`ClawHub: Using local skill "${localMatch.skill.slug}"`);
         const instructions = service.getSkillInstructions(localMatch.skill.slug);
         return buildSuccessResult(localMatch.skill, instructions, 'local', callback);
       }
 
-      // Step 2: Search ClawHub for a better match
-      const searchResults = await service.search(query, 5);
-
-      if (searchResults.length === 0) {
-        // No results - return local match if any, or nothing
-        if (localMatch) {
-          const instructions = service.getSkillInstructions(localMatch.skill.slug);
-          return buildSuccessResult(localMatch.skill, instructions, 'local', callback);
-        }
-
-        const text = `I couldn't find a specific skill for "${query}". I'll do my best with my general knowledge.`;
+      if (!bestRemote) {
+        const text = `I couldn't find a specific skill for "${searchTerms}". I'll do my best with my general knowledge.`;
         if (callback) await callback({ text });
         return { success: true, text, data: { found: false } };
-      }
-
-      // Step 3: Check if best remote result is better than local
-      const bestRemote = searchResults[0];
-      const remoteScore = bestRemote.score * 30; // Normalize ClawHub scores (0-1 range) to our scale
-
-      if (localMatch && localMatch.score >= remoteScore) {
-        // Local is good enough
-        const instructions = service.getSkillInstructions(localMatch.skill.slug);
-        return buildSuccessResult(localMatch.skill, instructions, 'local', callback);
       }
 
       // Step 4: Auto-install the best remote skill
@@ -163,30 +177,62 @@ export const getSkillGuidanceAction: Action = {
 };
 
 /**
+ * Extract meaningful search terms from a query
+ * Removes common words like "search", "find", "skill", etc.
+ */
+function extractSearchTerms(query: string): string {
+  // First, remove platform references like "on clawhub", "from clawhub", "in clawhub"
+  // These indicate WHERE to search, not WHAT to search for
+  let cleaned = query.toLowerCase()
+    .replace(/\b(on|in|from|at)\s+clawhub\b/g, '')
+    .replace(/\bclawhub\s+(registry|platform|site|website|catalog)\b/g, '');
+
+  const stopWords = new Set([
+    // Common verbs/questions
+    'search', 'find', 'look', 'for', 'a', 'an', 'the', 'skill', 'skills',
+    'please', 'can', 'you', 'help', 'me', 'with', 'how', 'to', 'do', 'i',
+    'need', 'want', 'get', 'use', 'using', 'about', 'is', 'are', 'there',
+    'any', 'some', 'show', 'list', 'give', 'tell', 'what', 'which',
+  ]);
+
+  const words = cleaned
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !stopWords.has(w));
+
+  return words.join(' ') || query.toLowerCase();
+}
+
+/**
  * Find the best matching skill from installed skills
+ * Only returns matches with name/slug match (strong matches)
  */
 function findBestLocalMatch(skills: Skill[], query: string): { skill: Skill; score: number } | null {
   const queryLower = query.toLowerCase();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
   let bestMatch: { skill: Skill; score: number } | null = null;
 
   for (const skill of skills) {
     let score = 0;
+    const slugLower = skill.slug.toLowerCase();
+    const nameLower = skill.name.toLowerCase();
 
-    // Slug match
-    if (queryLower.includes(skill.slug.toLowerCase())) {
+    // Exact slug match in query - highest priority
+    if (queryLower.includes(slugLower) || queryWords.some(w => slugLower.includes(w) && w.length > 3)) {
       score += 10;
     }
 
-    // Name match
-    if (queryLower.includes(skill.name.toLowerCase())) {
+    // Name match - also high priority
+    if (queryLower.includes(nameLower) || queryWords.some(w => nameLower.includes(w) && w.length > 3)) {
       score += 8;
     }
 
-    // Keyword matches from description
-    const words = skill.description.toLowerCase().split(/\s+/);
-    for (const word of words) {
-      if (word.length > 4 && queryLower.includes(word)) {
-        score += 2;
+    // Only count description words if they're specific (not generic skill terms)
+    const genericWords = new Set(['skill', 'agent', 'search', 'install', 'use', 'when', 'with', 'from', 'your']);
+    const descWords = skill.description.toLowerCase().split(/\s+/);
+    for (const word of descWords) {
+      if (word.length > 5 && !genericWords.has(word) && queryWords.includes(word)) {
+        score += 1;
       }
     }
 

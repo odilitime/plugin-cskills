@@ -4,7 +4,11 @@ import type { Plugin, Service, Action, Provider, IAgentRuntime } from '@elizaos/
 import { ClawHubService } from './services/clawhub';
 
 // Actions
+import { searchSkillsAction } from './actions/search-skills';
+import { getSkillDetailsAction } from './actions/get-skill-details';
 import { getSkillGuidanceAction } from './actions/get-skill-guidance';
+import { syncCatalogAction } from './actions/sync-catalog';
+import { runSkillScriptAction } from './actions/run-skill-script';
 
 // Providers (low → high resolution)
 import {
@@ -20,7 +24,11 @@ import { startSyncTask } from './tasks/sync-catalog';
 const ALL_SERVICES: (typeof Service)[] = [ClawHubService];
 
 const ALL_ACTIONS: Action[] = [
-  getSkillGuidanceAction,  // The only action - auto-finds, installs, returns instructions
+  searchSkillsAction,      // Browse/search available skills
+  getSkillDetailsAction,   // Get info about a specific skill
+  getSkillGuidanceAction,  // Auto-finds, installs, returns skill instructions
+  syncCatalogAction,       // Manual catalog sync
+  runSkillScriptAction,    // Execute scripts from installed skills
 ];
 
 const ALL_PROVIDERS: Provider[] = [

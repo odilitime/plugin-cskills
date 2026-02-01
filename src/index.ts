@@ -22,7 +22,11 @@ export type {
 } from './services/clawhub';
 
 // Actions
+export { searchSkillsAction } from './actions/search-skills';
+export { getSkillDetailsAction } from './actions/get-skill-details';
 export { getSkillGuidanceAction } from './actions/get-skill-guidance';
+export { syncCatalogAction } from './actions/sync-catalog';
+export { runSkillScriptAction } from './actions/run-skill-script';
 
 // Providers
 export {
